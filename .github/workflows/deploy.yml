@@ -1,0 +1,49 @@
+name: Deploy to kind cluster
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to deploy (e.g. latest or sha-<full commit sha>)"
+        required: true
+        default: latest
+
+env:
+  IMAGE_PREFIX: ghcr.io/akshayzilmoney/k8s-sample
+  KUBE_CONTEXT: kind-ultimate-learning
+
+jobs:
+  deploy:
+    # Runs on the self-hosted runner on your PC, which can reach the kind cluster.
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select cluster
+        run: |
+          kubectl config use-context $env:KUBE_CONTEXT
+          kubectl get nodes
+
+      - name: Deploy MySQL
+        run: kubectl apply -f learning-app/k8s/mysql.yaml
+
+      - name: Deploy backend and frontend with the chosen image tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          foreach ($c in "backend", "frontend") {
+            (Get-Content "learning-app/k8s/$c.yaml" -Raw) `
+              -replace "learning-$($c):1.0", "$($env:IMAGE_PREFIX)-$($c):$($env:TAG)" `
+              -replace "imagePullPolicy: IfNotPresent", "imagePullPolicy: Always" |
+              kubectl apply -f -
+          }
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/mysql -n learning --timeout=180s
+          kubectl rollout status deployment/backend -n learning --timeout=180s
+          kubectl rollout status deployment/frontend -n learning --timeout=180s
+          kubectl get pods -n learning
